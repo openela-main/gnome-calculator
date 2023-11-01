@@ -1,0 +1,425 @@
+From 3edf6664432fd65ad68b7e5b91de65eef7fcdb09 Mon Sep 17 00:00:00 2001
+From: Robert Roth <robert.roth.off@gmail.com>
+Date: Thu, 4 Oct 2018 23:41:03 +0300
+Subject: [PATCH 4/5] Conversion ui improvements (#72)
+
+---
+ src/math-converter.ui   |  9 +++++++--
+ src/math-converter.vala | 45 +++++++++++++++++++++++++++--------------
+ src/math-display.vala   | 12 ++++-------
+ 3 files changed, 41 insertions(+), 25 deletions(-)
+
+diff --git a/src/math-converter.ui b/src/math-converter.ui
+index 8172ede3..9ec03820 100644
+--- a/src/math-converter.ui
++++ b/src/math-converter.ui
+@@ -1,59 +1,63 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <!-- Generated with glade 3.19.0 -->
+ <interface>
+   <requires lib="gtk+" version="3.16"/>
+   <template class="MathConverter" parent="GtkGrid">
+     <property name="visible">False</property>
+     <property name="can_focus">False</property>
+     <property name="row_spacing">6</property>
+     <property name="column_spacing">6</property>
+     <child>
+       <object class="GtkButton" id="swap_button">
+         <property name="label">⇆</property>
+         <property name="visible">True</property>
+         <property name="can_focus">False</property>
+         <property name="receives_default">False</property>
+         <property name="tooltip_text" translatable="yes">Switch conversion units</property>
+         <property name="relief">none</property>
+         <signal name="clicked" handler="swap_button_clicked_cb" swapped="no"/>
+       </object>
+       <packing>
+         <property name="left_attach">3</property>
+         <property name="top_attach">0</property>
+       </packing>
+     </child>
+     <child>
+-      <object class="GtkLabel" id="in_label">
++      <object class="GtkButton" id="in_button">
+         <property name="visible">True</property>
+         <property name="can_focus">False</property>
+-        <property name="label" translatable="yes"> in </property>
++        <property name="label" translatable="yes"> to </property>
++        <signal name="clicked" handler="convert_button_clicked_cb" swapped="no"/>
++        <style>
++          <class name="flat"/>
++        </style>
+       </object>
+       <packing>
+         <property name="left_attach">1</property>
+         <property name="top_attach">0</property>
+       </packing>
+     </child>
+     <child>
+       <object class="GtkComboBox" id="from_combo">
+         <property name="visible">True</property>
+         <property name="can_focus">False</property>
+         <signal name="changed" handler="from_combobox_changed_cb" swapped="no"/>
+         <child>
+           <object class="GtkCellRendererText" id="from_renderer"/>
+           <attributes>
+             <attribute name="text">0</attribute>
+           </attributes>
+         </child>
+       </object>
+       <packing>
+         <property name="left_attach">0</property>
+         <property name="top_attach">0</property>
+       </packing>
+     </child>
+     <child>
+       <object class="GtkComboBox" id="to_combo">
+         <property name="visible">True</property>
+         <property name="can_focus">False</property>
+         <property name="opacity">0.88</property>
+         <signal name="changed" handler="to_combobox_changed_cb" swapped="no"/>
+         <child>
+@@ -103,30 +107,31 @@
+             <property name="hexpand">False</property>
+             <property name="vexpand">False</property>
+             <property name="justify">center</property>
+             <property name="xalign">0</property>
+             <property name="yalign">0</property>
+             <property name="label" translatable="yes" context="convertion equals label">=</property>
+           </object>
+         </child>
+         <child>
+           <object class="GtkLabel" id="to_label">
+             <property name="visible">True</property>
+             <property name="sensitive">True</property>
+             <property name="can_focus">False</property>
+             <property name="halign">end</property>
+             <property name="valign">center</property>
+             <property name="hexpand">True</property>
+             <property name="vexpand">False</property>
+             <property name="justify">center</property>
+             <property name="xalign">0</property>
+             <property name="yalign">0</property>
+           </object>
+           <packing>
+             <property name="expand">false</property>
+             <property name="fill">true</property>
+           </packing>
+         </child>
+       </object>
+     </child>
+   </template>
+ </interface>
++
+diff --git a/src/math-converter.vala b/src/math-converter.vala
+index 0cf90ac5..a83dea24 100644
+--- a/src/math-converter.vala
++++ b/src/math-converter.vala
+@@ -75,66 +75,64 @@ public class MathConverter : Gtk.Grid
+             {
+                 Gtk.TreeIter child_iter;
+                 while (model.iter_children (out child_iter, iter))
+                     iter = child_iter;
+                 from_combo.set_active_iter (iter);
+             }
+             return;
+         }
+ 
+         set_active_unit (from_combo, null, ua);
+         set_active_unit (to_combo, null, ub);
+     }
+ 
+     public void get_conversion (out Unit from_unit, out Unit to_unit)
+     {
+         Gtk.TreeIter from_iter, to_iter;
+ 
+         from_combo.get_active_iter (out from_iter);
+         to_combo.get_active_iter (out to_iter);
+ 
+         from_combo.get_model ().get (from_iter, 2, out from_unit, -1);
+         to_combo.get_model ().get (to_iter, 2, out to_unit, -1);
+     }
+ 
+     private void update_result_label ()
+     {
+         var x = equation.number;
+         if (x == null)
+             return;
+ 
+-        var z = convert_equation (x);
++        Unit source_unit, target_unit;
++        var z = convert_equation (x, out source_unit, out target_unit);
+         if (z != null)
+         {
+-            Unit source_unit, target_unit;
+-            get_conversion (out source_unit, out target_unit);
+-
+             var source_text = source_unit.format (x);
+             var target_text = target_unit.format (z);
+             from_label.set_text (source_text);
+             to_label.set_text (target_text);
+         }
+     }
+ 
+     private void update_from_model ()
+     {
+         var from_model = new Gtk.TreeStore (3, typeof (string), typeof (UnitCategory), typeof (Unit));
+ 
+         if (category == null)
+         {
+             var categories = UnitManager.get_default ().get_categories ();
+             foreach (var category in categories)
+             {
+                 Gtk.TreeIter parent;
+                 from_model.append (out parent, null);
+                 from_model.set (parent, 0, category.display_name, 1, category, -1);
+ 
+                 foreach (var unit in category.get_units ())
+                 {
+                     Gtk.TreeIter iter;
+                     from_model.append (out iter, parent);
+                     from_model.set (iter, 0, unit.display_name, 1, category, 2, unit, -1);
+                 }
+             }
+         }
+         else
+         {
+@@ -201,62 +199,79 @@ public class MathConverter : Gtk.Grid
+             /* Set the to combobox to be the list of units can be converted to */
+             to_model = new Gtk.ListStore (3, typeof (string), typeof (UnitCategory), typeof (Unit));
+             foreach (var u in category.get_units ())
+             {
+                 to_model.append (out iter);
+                 to_model.set (iter, 0, u.display_name, 1, category, 2, u, -1);
+             }
+             to_combo.model = to_model;
+ 
+             /* Select the first possible unit */
+             to_combo.set_active (0);
+         }
+     }
+ 
+     [GtkCallback]
+     private void to_combobox_changed_cb ()
+     {
+         /* Conversion must have changed */
+         update_result_label ();
+         changed ();
+     }
+ 
+     private void from_cell_data_func (Gtk.CellLayout cell_layout, Gtk.CellRenderer cell, Gtk.TreeModel tree_model, Gtk.TreeIter iter)
+     {
+         cell.set ("sensitive", !tree_model.iter_has_child (iter));
+     }
+ 
+     [GtkCallback]
+     private void swap_button_clicked_cb ()
+     {
++        Unit? from_unit, to_unit;
++        get_conversion (out from_unit, out to_unit);
++
++        set_active_unit (from_combo, null, to_unit);
++        set_active_unit (to_combo, null, from_unit);
++
++        do_convert(out from_unit, out to_unit);
++
++        update_result_label ();
++    }
++
++    private void do_convert (out Unit? from_unit, out Unit? to_unit) {
+         var x = equation.number;
+         if (x != null)
+         {
+-            var z = convert_equation (x);
+-            if (z != null)
+-                equation.set_number (z);
++            var z = convert_equation (x, out from_unit, out to_unit);
++            if (z != null && from_unit != null && to_unit != null)
++            {
++                equation.set ("%s %s %s %s".printf(equation.serializer.to_string (x), from_unit.display_name, _("in"), to_unit.display_name));
++                equation.solve ();
++            }
+         }
++    }
+ 
+-        Unit from_unit, to_unit;
+-        get_conversion (out from_unit, out to_unit);
+-        set_active_unit (from_combo, null, to_unit);
+-        set_active_unit (to_combo, null, from_unit);
++    [GtkCallback]
++    private void convert_button_clicked_cb ()
++    {
++        Unit? from_unit, to_unit;
++        do_convert (out from_unit, out to_unit);
+ 
+         update_result_label ();
+     }
+ 
+-    private Number? convert_equation (Number x)
++    private Number?  convert_equation (Number x,
++                                       out Unit? source_unit,
++                                       out Unit? target_unit)
+     {
+         Gtk.TreeIter from_iter, to_iter;
+         if (!from_combo.get_active_iter (out from_iter))
+             return null;
+         if (!to_combo.get_active_iter (out to_iter))
+             return null;
+-
+         UnitCategory category;
+-        Unit source_unit, target_unit;
+         from_combo.model.get (from_iter, 1, out category, 2, out source_unit, -1);
+         to_combo.model.get (to_iter, 2, out target_unit, -1);
+ 
+         return category.convert (x, source_unit, target_unit);
+-    }
++  }
+ }
+diff --git a/src/math-display.vala b/src/math-display.vala
+index 4b1a17c8..01156b0c 100644
+--- a/src/math-display.vala
++++ b/src/math-display.vala
+@@ -1,60 +1,60 @@
+ /*
+  * Copyright (C) 2008-2012 Robert Ancell
+  *
+  * This program is free software: you can redistribute it and/or modify it under
+  * the terms of the GNU General Public License as published by the Free Software
+  * Foundation, either version 3 of the License, or (at your option) any later
+  * version. See http://www.gnu.org/copyleft/gpl.html the full text of the
+  * license.
+  */
+ 
+ public class MathDisplay : Gtk.Viewport
+ {
+     /* Equation being displayed */
+     private MathEquation _equation;
+     public MathEquation equation { get { return _equation; } }
+     private HistoryView history;
+ 
+     /* Display widget */
+     Gtk.SourceView source_view;
+ 
+     /* Buffer that shows errors etc */
+     Gtk.TextBuffer info_buffer;
+ 
+     /* Spinner widget that shows if we're calculating a response */
+     Gtk.Spinner spinner;
+ 
+     public MathDisplay (MathEquation equation)
+     {
+         _equation = equation;
+-        _equation.history_signal.connect (this.handler);
++        _equation.history_signal.connect (this.update_history);
+         var main_box = new Gtk.Box (Gtk.Orientation.VERTICAL, 0);
+         add (main_box);
+ 
+         history = new HistoryView ();
+         history.answer_clicked.connect ((ans) => { insert_text (ans); });
+         history.equation_clicked.connect ((eq) => { display_text (eq); });
+         main_box.add (history);
+         main_box.show_all ();
+ 
+         var scrolled_window = new Gtk.ScrolledWindow (null, null);
+         var style_context = scrolled_window.get_style_context ();
+         style_context.add_class ("display-scrolled");
+ 
+         scrolled_window.set_policy (Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER);
+         source_view = new Gtk.SourceView.with_buffer (equation);
+         source_view.set_accepts_tab (false);
+         source_view.set_left_margin (14);
+         source_view.set_pixels_above_lines (8);
+         source_view.set_pixels_below_lines (2);
+         source_view.set_justification (Gtk.Justification.LEFT);
+ 
+         source_view.set_name ("displayitem");
+         source_view.set_size_request (20, 20);
+         source_view.get_accessible ().set_role (Atk.Role.EDITBAR);
+         //FIXME:<property name="AtkObject::accessible-description" translatable="yes" comments="Accessible description for the area in which results are displayed">Result Region</property>
+         source_view.key_press_event.connect (key_press_cb);
+         create_autocompletion ();
+ 
+         main_box.pack_start (scrolled_window, false, false, 0);
+         scrolled_window.add (source_view); /* Adds ScrolledWindow to source_view for displaying long equations */
+@@ -67,75 +67,71 @@ public class MathDisplay : Gtk.Viewport
+         info_view.set_wrap_mode (Gtk.WrapMode.WORD);
+         info_view.set_can_focus (false);
+         info_view.set_editable (false);
+         info_view.set_left_margin (12);
+         info_view.set_right_margin (12);
+         info_box.pack_start (info_view, true, true, 0);
+         info_buffer = info_view.get_buffer ();
+ 
+         style_context = info_view.get_style_context ();
+         style_context.add_class ("info-view");
+ 
+         spinner = new Gtk.Spinner ();
+         info_box.pack_end (spinner, false, false, 0);
+ 
+         info_box.show ();
+         info_view.show ();
+         source_view.show ();
+         main_box.show ();
+ 
+         equation.notify["status"].connect ((pspec) => { status_changed_cb (); });
+         status_changed_cb ();
+ 
+         equation.notify["error-token-end"].connect ((pspec) => { error_status_changed_cb (); });
+     }
+ 
+     public void grabfocus () /* Editbar grabs focus when an instance of gnome-calculator is created */
+     {
+         source_view.grab_focus ();
+     }
+ 
+-    public void handler (string answer, Number number, int number_base, uint representation_base)
++    public void update_history (string answer, Number number, int number_base, uint representation_base)
+     {
+-        this.update_history (answer, number, number_base, representation_base); /* Recieves signal emitted by a MathEquation object for updating history-view */
++        /* Recieves signal emitted by a MathEquation object for updating history-view */
++        history.insert_entry (answer, number, number_base, representation_base); /* Sends current equation and answer for updating History-View */
+     }
+ 
+     public void display_text (string prev_eq)
+     {
+         _equation.display_selected (prev_eq);
+     }
+ 
+-    public void update_history (string answer, Number number, int number_base, uint representation_base)
+-    {
+-        history.insert_entry (answer, number, number_base, representation_base); /* Sends current equation and answer for updating History-View */
+-    }
+-
+     public void clear_history ()
+     {
+         history.clear ();
+     }
+ 
+     public void insert_text (string answer)
+     {
+         _equation.insert_selected (answer);
+     }
+ 
+     private void create_autocompletion ()
+     {
+         Gtk.SourceCompletion completion = source_view.get_completion ();
+         try
+         {
+             completion.add_provider (new FunctionCompletionProvider ());
+             completion.add_provider (new VariableCompletionProvider (equation));
+         }
+         catch (Error e)
+         {
+             warning ("Could not add CompletionProvider to source-view");
+         }
+     }
+ 
+     private bool function_completion_window_visible ()
+     {
+         unowned List<Gtk.SourceCompletionProvider> providers_list = source_view.get_completion ().get_providers ();
+         if (providers_list.length () > 0)
+         {
+             MathFunction[] functions = FunctionCompletionProvider.get_matches_for_completion_at_cursor (equation);
+-- 
+2.31.1
+

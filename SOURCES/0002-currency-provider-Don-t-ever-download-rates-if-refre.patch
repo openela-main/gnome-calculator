@@ -1,0 +1,180 @@
+From bddcd343ec6a4aad86a7add9cd5abf77338ffb76 Mon Sep 17 00:00:00 2001
+From: Ray Strode <rstrode@redhat.com>
+Date: Thu, 13 May 2021 10:44:33 -0400
+Subject: [PATCH 2/5] currency-provider: Don't ever download rates if refresh
+ interval is 0
+
+If an admin has set the currency refresh interval to 0 they probably
+don't ever want the data refreshed from the network.
+
+This commit treats a refresh interval of 0 specially to mean
+"don't go on the network at all"
+---
+ data/org.gnome.calculator.gschema.xml | 2 +-
+ lib/currency.vala                     | 6 ++++++
+ 2 files changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/data/org.gnome.calculator.gschema.xml b/data/org.gnome.calculator.gschema.xml
+index a3af435f..fbde9b53 100644
+--- a/data/org.gnome.calculator.gschema.xml
++++ b/data/org.gnome.calculator.gschema.xml
+@@ -33,61 +33,61 @@
+     </key>
+     <key type="i" name="base">
+       <default>10</default>
+       <range min="2" max="16"/>
+       <summary>Numeric Base</summary>
+       <description>The numeric base</description>
+     </key>
+     <key type="b" name="show-thousands">
+       <default>false</default>
+       <summary>Show Thousands Separators</summary>
+       <description>Indicates whether thousands separators are shown in large numbers.</description>
+     </key>
+     <key type="b" name="show-zeroes">
+       <default>false</default>
+       <summary>Show Trailing Zeroes</summary>
+       <description>Indicates whether any trailing zeroes after the  numeric point should be shown in the display value.</description>
+     </key>
+     <key name="number-format" enum="org.gnome.calculator.NumberFormat">
+       <default>'automatic'</default>
+       <summary>Number format</summary>
+       <description>The format to display numbers in</description>
+     </key>
+     <key name="angle-units" enum="org.gnome.calculator.AngleUnit">
+       <default>'degrees'</default>
+       <summary>Angle units</summary>
+       <description>The angle units to use</description>
+     </key>
+     <key name="refresh-interval" type="i">
+       <default>604800</default>
+       <summary>Currency update interval</summary>
+-      <description>How often the currency exchange rates should be updated</description>
++      <description>How often the currency exchange rates should be updated. A value of 0 means the currency exchange rates won't be fetched from the network at all.</description>
+     </key>
+     <key name="button-mode" enum="org.gnome.calculator.ButtonMode">
+       <default>'basic'</default>
+       <summary>Button mode</summary>
+       <description>The button mode</description>
+     </key>
+     <key type="s" name="source-currency">
+       <default>''</default>
+       <summary>Source currency</summary>
+       <description>Currency of the current calculation</description>
+     </key>
+     <key type="s" name="target-currency">
+       <default>''</default>
+       <summary>Target currency</summary>
+       <description>Currency to convert the current calculation into</description>
+     </key>
+     <key type="s" name="source-units">
+       <default>'degree'</default>
+       <summary>Source units</summary>
+       <description>Units of the current calculation</description>
+     </key>
+     <key type="s" name="target-units">
+       <default>'radian'</default>
+       <summary>Target units</summary>
+       <description>Units to convert the current calculation into</description>
+     </key>
+     <key type="i" name="precision">
+       <default>2000</default>
+       <summary>Internal precision</summary>
+       <description>The internal precision used with the MPFR library</description>
+diff --git a/lib/currency.vala b/lib/currency.vala
+index c098cc52..2adb11e4 100644
+--- a/lib/currency.vala
++++ b/lib/currency.vala
+@@ -354,83 +354,89 @@ public class CurrencyManager : Object
+         {
+             warning ("Couldn't create XPath context");
+             return;
+         }
+ 
+         xpath_ctx.register_ns ("xref", "http://www.ecb.int/vocabulary/2002-08-01/eurofxref");
+         var xpath_obj = xpath_ctx.eval_expression ("//xref:Cube[@currency][@rate]");
+         if (xpath_obj == null)
+         {
+             warning ("Couldn't create XPath object");
+             return;
+         }
+         var len = (xpath_obj->nodesetval != null) ? xpath_obj->nodesetval->length () : 0;
+         for (var i = 0; i < len; i++)
+         {
+             var node = xpath_obj->nodesetval->item (i);
+ 
+             if (node->type == Xml.ElementType.ELEMENT_NODE)
+                 set_ecb_rate (node, eur_rate);
+ 
+             /* Avoid accessing removed elements */
+             if (node->type != Xml.ElementType.NAMESPACE_DECL)
+                 node = null;
+         }
+ 
+         Xml.Parser.cleanup ();
+     }
+ 
+     private void download_rates ()
+     {
++        if (refresh_interval == 0)
++            return;
++
+         /* Update rates if necessary */
+         var path = get_imf_rate_filepath ();
+         if (!downloading_imf_rates && file_needs_update (path, refresh_interval))
+         {
+             downloading_imf_rates = true;
+             debug ("Downloading rates from the IMF...");
+             download_file.begin ("https://www.imf.org/external/np/fin/data/rms_five.aspx?tsvflag=Y", path, "IMF");
+         }
+         path = get_ecb_rate_filepath ();
+         if (!downloading_ecb_rates && file_needs_update (path, refresh_interval))
+         {
+             downloading_ecb_rates = true;
+             debug ("Downloading rates from the ECB...");
+             download_file.begin ("https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml", path, "ECB");
+         }
+     }
+ 
+     private bool load_rates ()
+     {
+         /* Already loaded */
+         if (loaded_rates)
+             return true;
+ 
++        if (refresh_interval == 0)
++            return false;
++
+         /* In process */
+         if (downloading_imf_rates || downloading_ecb_rates)
+             return false;
+ 
+         /* Use the IMF provided values and top up with currencies tracked by the ECB and not the IMF */
+         load_imf_rates ();
+         load_ecb_rates ();
+ 
+         /* Check if we couldn't find out a currency */
+         foreach (var c in currencies)
+             if (c.get_value () == null || c.get_value ().is_zero ())
+                 warning ("Currency %s is not provided by IMF or ECB", c.name);
+ 
+         debug ("Rates loaded");
+         loaded_rates = true;
+ 
+         updated ();
+ 
+         return true;
+     }
+ 
+     public Number? get_value (string currency)
+     {
+         /* Make sure that the rates we're returning are up to date. (Just in case the application is running from a long long time) */
+         download_rates ();
+ 
+         if (!load_rates ())
+             return null;
+ 
+         var c = get_currency (currency);
+-- 
+2.31.1
+

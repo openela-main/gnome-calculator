@@ -1,0 +1,85 @@
+From 21b2235fc53e72eea0aab035de5b19a74fd165c3 Mon Sep 17 00:00:00 2001
+From: Ray Strode <rstrode@redhat.com>
+Date: Thu, 13 May 2021 14:08:27 -0400
+Subject: [PATCH 3/5] gnome-calculator: Update refresh interval when changed in
+ gsettings
+
+Right now the refresh interval is read at start up.
+
+This commit makes sure it gets reread any time it's changed too.
+---
+ src/gnome-calculator.vala | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/gnome-calculator.vala b/src/gnome-calculator.vala
+index 5b3f9b8d..89a83450 100644
+--- a/src/gnome-calculator.vala
++++ b/src/gnome-calculator.vala
+@@ -101,60 +101,64 @@ public class Calculator : Gtk.Application
+         catch (Error e)
+         {
+             error ("Error loading menu UI: %s", e.message);
+         }
+ 
+         var menu = builder.get_object ("appmenu") as MenuModel;
+         set_app_menu (menu);
+ 
+         set_accels_for_action ("win.mode::basic", {"<alt>B"});
+         set_accels_for_action ("win.mode::advanced", {"<alt>A"});
+         set_accels_for_action ("win.mode::financial", {"<alt>F"});
+         set_accels_for_action ("win.mode::programming", {"<alt>P"});
+         set_accels_for_action ("win.mode::keyboard", {"<alt>K"});
+         set_accels_for_action ("win.copy", {"<control>C"});
+         set_accels_for_action ("win.paste", {"<control>V"});
+         set_accels_for_action ("win.undo", {"<control>Z"});
+         set_accels_for_action ("win.close", {"<control>W"});
+         set_accels_for_action ("win.redo", {"<control><shift>Z"});
+         return current_window;
+     }
+ 
+     protected override void startup ()
+     {
+         base.startup ();
+ 
+         settings = new Settings ("org.gnome.calculator");
+         last_opened_window = create_new_window (settings);
+         // restore the first window position from the settings
+         load_window_position (last_opened_window);
+         CurrencyManager.get_default ().refresh_interval = settings.get_int ("refresh-interval");
++
++        settings.changed["refresh-interval"].connect(() => {
++            CurrencyManager.get_default ().refresh_interval = settings.get_int ("refresh-interval");
++        });
+     }
+ 
+     private MathWindow get_active_math_window ()
+     {
+         return (MathWindow) get_active_window ();
+     }
+ 
+     protected override void activate ()
+     {
+         base.activate ();
+ 
+         last_opened_window.present ();
+         if (equation_string != "" && equation_string != null)
+         {
+             var equations = (equation_string.compress ()).split ("\n",0);
+             for (var i = 0; i < equations.length; i++)
+             {
+                 if ((equations [i].strip ()).length > 0)
+                     last_opened_window.equation.set (equations [i]);
+                 else
+                     last_opened_window.equation.solve ();
+             }
+         }
+         if (mode_string != "" && mode_string != null)
+         {
+             var mode = ButtonMode.BASIC;
+ 
+             switch (mode_string)
+             {
+             case "basic":
+-- 
+2.31.1
+

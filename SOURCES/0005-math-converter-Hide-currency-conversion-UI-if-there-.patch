@@ -1,0 +1,697 @@
+From 213feffa73f09303914f0032ba9976ecb17629cd Mon Sep 17 00:00:00 2001
+From: Ray Strode <rstrode@redhat.com>
+Date: Thu, 13 May 2021 11:29:33 -0400
+Subject: [PATCH 5/5] math-converter: Hide currency conversion UI if there
+ isn't a loaded currency provider
+
+If the admin sets a currency refresh-interval of 0, then the currency
+conversion data will be missing or woefully out of date.
+
+This commit changes the code to hide the conversion UI in this case.
+---
+ lib/currency.vala         |  15 ++-
+ src/gnome-calculator.vala |   1 +
+ src/math-converter.ui     | 264 ++++++++++++++++++++++++--------------
+ src/math-converter.vala   |  18 ++-
+ 4 files changed, 197 insertions(+), 101 deletions(-)
+
+diff --git a/lib/currency.vala b/lib/currency.vala
+index 2adb11e4..4270b701 100644
+--- a/lib/currency.vala
++++ b/lib/currency.vala
+@@ -1,53 +1,62 @@
+ /*
+  * Copyright (C) 2008-2012 Robert Ancell.
+  *
+  * This program is free software: you can redistribute it and/or modify it under
+  * the terms of the GNU General Public License as published by the Free Software
+  * Foundation, either version 3 of the License, or (at your option) any later
+  * version. See http://www.gnu.org/copyleft/gpl.html the full text of the
+  * license.
+  */
+ 
+ static bool downloading_imf_rates = false;
+ static bool downloading_ecb_rates = false;
+-static bool loaded_rates = false;
+ private static CurrencyManager? default_currency_manager = null;
+ 
+ public class CurrencyManager : Object
+ {
+     private List<Currency> currencies;
+ 
+     public int refresh_interval { get; set; }
+ 
+     public signal void updated ();
+ 
++    public bool loaded { get; private set; }
++
++    public void refresh_sync () {
++        loaded = false;
++        load_rates ();
++
++        if (!loaded)
++            updated ();
++    }
++
+     public static CurrencyManager get_default ()
+     {
+         if (default_currency_manager != null)
+             return default_currency_manager;
+ 
+         default_currency_manager = new CurrencyManager ();
+ 
+         default_currency_manager.currencies.append (new Currency ("AED", _("UAE Dirham"), "إ.د"));
+         default_currency_manager.currencies.append (new Currency ("AUD", _("Australian Dollar"), "$"));
+         default_currency_manager.currencies.append (new Currency ("BGN", _("Bulgarian Lev"), "лв"));
+         default_currency_manager.currencies.append (new Currency ("BHD", _("Bahraini Dinar"), ".ب.د"));
+         default_currency_manager.currencies.append (new Currency ("BND", _("Brunei Dollar"), "$"));
+         default_currency_manager.currencies.append (new Currency ("BRL", _("Brazilian Real"), "R$"));
+         default_currency_manager.currencies.append (new Currency ("BWP", _("Botswana Pula"), "P"));
+         default_currency_manager.currencies.append (new Currency ("CAD", _("Canadian Dollar"), "$"));
+         default_currency_manager.currencies.append (new Currency ("CFA", _("CFA Franc"), "Fr"));
+         default_currency_manager.currencies.append (new Currency ("CHF", _("Swiss Franc"), "Fr"));
+         default_currency_manager.currencies.append (new Currency ("CLP", _("Chilean Peso"), "$"));
+         default_currency_manager.currencies.append (new Currency ("CNY", _("Chinese Yuan"), "¥"));
+         default_currency_manager.currencies.append (new Currency ("COP", _("Colombian Peso"), "$"));
+         default_currency_manager.currencies.append (new Currency ("CZK", _("Czech Koruna"), "Kč"));
+         default_currency_manager.currencies.append (new Currency ("DKK", _("Danish Krone"), "kr"));
+         default_currency_manager.currencies.append (new Currency ("DZD", _("Algerian Dinar"), "ج.د"));
+         default_currency_manager.currencies.append (new Currency ("EEK", _("Estonian Kroon"), "KR"));
+         default_currency_manager.currencies.append (new Currency ("EUR", _("Euro"), "€"));
+         default_currency_manager.currencies.append (new Currency ("GBP", _("British Pound Sterling"), "£"));
+         default_currency_manager.currencies.append (new Currency ("HKD", _("Hong Kong Dollar"), "$"));
+         default_currency_manager.currencies.append (new Currency ("HRK", _("Croatian Kuna"), "kn"));
+         default_currency_manager.currencies.append (new Currency ("HUF", _("Hungarian Forint"), "Ft"));
+         default_currency_manager.currencies.append (new Currency ("IDR", _("Indonesian Rupiah"), "Rp"));
+@@ -377,81 +386,81 @@ public class CurrencyManager : Object
+         }
+ 
+         Xml.Parser.cleanup ();
+     }
+ 
+     private void download_rates ()
+     {
+         if (refresh_interval == 0)
+             return;
+ 
+         /* Update rates if necessary */
+         var path = get_imf_rate_filepath ();
+         if (!downloading_imf_rates && file_needs_update (path, refresh_interval))
+         {
+             downloading_imf_rates = true;
+             debug ("Downloading rates from the IMF...");
+             download_file.begin ("https://www.imf.org/external/np/fin/data/rms_five.aspx?tsvflag=Y", path, "IMF");
+         }
+         path = get_ecb_rate_filepath ();
+         if (!downloading_ecb_rates && file_needs_update (path, refresh_interval))
+         {
+             downloading_ecb_rates = true;
+             debug ("Downloading rates from the ECB...");
+             download_file.begin ("https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml", path, "ECB");
+         }
+     }
+ 
+     private bool load_rates ()
+     {
+         /* Already loaded */
+-        if (loaded_rates)
++        if (loaded)
+             return true;
+ 
+         if (refresh_interval == 0)
+             return false;
+ 
+         /* In process */
+         if (downloading_imf_rates || downloading_ecb_rates)
+             return false;
+ 
+         /* Use the IMF provided values and top up with currencies tracked by the ECB and not the IMF */
+         load_imf_rates ();
+         load_ecb_rates ();
+ 
+         /* Check if we couldn't find out a currency */
+         foreach (var c in currencies)
+             if (c.get_value () == null || c.get_value ().is_zero ())
+                 warning ("Currency %s is not provided by IMF or ECB", c.name);
+ 
+         debug ("Rates loaded");
+-        loaded_rates = true;
++        loaded = true;
+ 
+         updated ();
+ 
+         return true;
+     }
+ 
+     public Number? get_value (string currency)
+     {
+         /* Make sure that the rates we're returning are up to date. (Just in case the application is running from a long long time) */
+         download_rates ();
+ 
+         if (!load_rates ())
+             return null;
+ 
+         var c = get_currency (currency);
+         if (c != null)
+             return c.get_value ();
+         else
+             return null;
+     }
+ 
+     private async void download_file (string uri, string filename, string source)
+     {
+ 
+         var directory = Path.get_dirname (filename);
+         DirUtils.create_with_parents (directory, 0755);
+ 
+         var dest = File.new_for_path (filename);
+         var session = new Soup.Session ();
+         var message = new Soup.Message ("GET", uri);
+diff --git a/src/gnome-calculator.vala b/src/gnome-calculator.vala
+index 89a83450..0aa0054e 100644
+--- a/src/gnome-calculator.vala
++++ b/src/gnome-calculator.vala
+@@ -104,60 +104,61 @@ public class Calculator : Gtk.Application
+         }
+ 
+         var menu = builder.get_object ("appmenu") as MenuModel;
+         set_app_menu (menu);
+ 
+         set_accels_for_action ("win.mode::basic", {"<alt>B"});
+         set_accels_for_action ("win.mode::advanced", {"<alt>A"});
+         set_accels_for_action ("win.mode::financial", {"<alt>F"});
+         set_accels_for_action ("win.mode::programming", {"<alt>P"});
+         set_accels_for_action ("win.mode::keyboard", {"<alt>K"});
+         set_accels_for_action ("win.copy", {"<control>C"});
+         set_accels_for_action ("win.paste", {"<control>V"});
+         set_accels_for_action ("win.undo", {"<control>Z"});
+         set_accels_for_action ("win.close", {"<control>W"});
+         set_accels_for_action ("win.redo", {"<control><shift>Z"});
+         return current_window;
+     }
+ 
+     protected override void startup ()
+     {
+         base.startup ();
+ 
+         settings = new Settings ("org.gnome.calculator");
+         last_opened_window = create_new_window (settings);
+         // restore the first window position from the settings
+         load_window_position (last_opened_window);
+         CurrencyManager.get_default ().refresh_interval = settings.get_int ("refresh-interval");
+ 
+         settings.changed["refresh-interval"].connect(() => {
+             CurrencyManager.get_default ().refresh_interval = settings.get_int ("refresh-interval");
++            CurrencyManager.get_default ().refresh_sync ();
+         });
+     }
+ 
+     private MathWindow get_active_math_window ()
+     {
+         return (MathWindow) get_active_window ();
+     }
+ 
+     protected override void activate ()
+     {
+         base.activate ();
+ 
+         last_opened_window.present ();
+         if (equation_string != "" && equation_string != null)
+         {
+             var equations = (equation_string.compress ()).split ("\n",0);
+             for (var i = 0; i < equations.length; i++)
+             {
+                 if ((equations [i].strip ()).length > 0)
+                     last_opened_window.equation.set (equations [i]);
+                 else
+                     last_opened_window.equation.solve ();
+             }
+         }
+         if (mode_string != "" && mode_string != null)
+         {
+             var mode = ButtonMode.BASIC;
+ 
+             switch (mode_string)
+             {
+diff --git a/src/math-converter.ui b/src/math-converter.ui
+index 9ec03820..fb633f10 100644
+--- a/src/math-converter.ui
++++ b/src/math-converter.ui
+@@ -1,137 +1,207 @@
+ <?xml version="1.0" encoding="UTF-8"?>
+ <!-- Generated with glade 3.19.0 -->
+ <interface>
+   <requires lib="gtk+" version="3.16"/>
+   <template class="MathConverter" parent="GtkGrid">
+-    <property name="visible">False</property>
+-    <property name="can_focus">False</property>
+-    <property name="row_spacing">6</property>
+-    <property name="column_spacing">6</property>
+     <child>
+-      <object class="GtkButton" id="swap_button">
+-        <property name="label">⇆</property>
+-        <property name="visible">True</property>
+-        <property name="can_focus">False</property>
+-        <property name="receives_default">False</property>
+-        <property name="tooltip_text" translatable="yes">Switch conversion units</property>
+-        <property name="relief">none</property>
+-        <signal name="clicked" handler="swap_button_clicked_cb" swapped="no"/>
+-      </object>
+-      <packing>
+-        <property name="left_attach">3</property>
+-        <property name="top_attach">0</property>
+-      </packing>
+-    </child>
+-    <child>
+-      <object class="GtkButton" id="in_button">
+-        <property name="visible">True</property>
+-        <property name="can_focus">False</property>
+-        <property name="label" translatable="yes"> to </property>
+-        <signal name="clicked" handler="convert_button_clicked_cb" swapped="no"/>
+-        <style>
+-          <class name="flat"/>
+-        </style>
+-      </object>
+-      <packing>
+-        <property name="left_attach">1</property>
+-        <property name="top_attach">0</property>
+-      </packing>
+-    </child>
+-    <child>
+-      <object class="GtkComboBox" id="from_combo">
+-        <property name="visible">True</property>
+-        <property name="can_focus">False</property>
+-        <signal name="changed" handler="from_combobox_changed_cb" swapped="no"/>
+-        <child>
+-          <object class="GtkCellRendererText" id="from_renderer"/>
+-          <attributes>
+-            <attribute name="text">0</attribute>
+-          </attributes>
+-        </child>
+-      </object>
+-      <packing>
+-        <property name="left_attach">0</property>
+-        <property name="top_attach">0</property>
+-      </packing>
+-    </child>
+-    <child>
+-      <object class="GtkComboBox" id="to_combo">
+-        <property name="visible">True</property>
+-        <property name="can_focus">False</property>
+-        <property name="opacity">0.88</property>
+-        <signal name="changed" handler="to_combobox_changed_cb" swapped="no"/>
+-        <child>
+-          <object class="GtkCellRendererText" id="to_renderer"/>
+-          <attributes>
+-            <attribute name="text">0</attribute>
+-          </attributes>
+-        </child>
+-      </object>
+-      <packing>
+-        <property name="left_attach">2</property>
+-        <property name="top_attach">0</property>
+-      </packing>
+-    </child>
+-    <child>
+-      <object class="GtkBox" id="result_holder">
+-        <property name="visible">True</property>
++      <object class="GtkBox" id="outer_box">
++        <property name="visible" bind-source="MathConverter" bind-property="outer-box-visible" bind-flags="sync-create|bidirectional"/>
+         <property name="orientation">horizontal</property>
+         <property name="sensitive">True</property>
+-        <property name="spacing">6</property>
+         <property name="can_focus">False</property>
+-        <property name="halign">end</property>
++        <property name="halign">center</property>
+         <property name="valign">center</property>
+         <property name="hexpand">True</property>
+         <property name="vexpand">False</property>
+         <child>
+-          <object class="GtkLabel" id="from_label">
++          <object class="GtkComboBox" id="from_combo">
+             <property name="visible">True</property>
+-            <property name="sensitive">True</property>
+             <property name="can_focus">False</property>
+-            <property name="halign">start</property>
+-            <property name="valign">center</property>
+             <property name="hexpand">True</property>
+-            <property name="vexpand">False</property>
+-            <property name="justify">center</property>
+-            <property name="xalign">0</property>
+-            <property name="yalign">0</property>
++            <signal name="changed" handler="from_combobox_changed_cb" swapped="no"/>
++            <child>
++              <object class="GtkCellRendererText" id="from_renderer">
++                <property name="ellipsize">end</property>
++              </object>
++              <attributes>
++                <attribute name="text">0</attribute>
++              </attributes>
++            </child>
++          </object>
++        </child>
++        <child>
++          <object class="GtkButton" id="in_button">
++            <property name="visible">True</property>
++            <property name="can_focus">False</property>
++            <property name="label" translatable="yes"> to </property>
++            <signal name="clicked" handler="convert_button_clicked_cb" swapped="no"/>
++            <style>
++              <class name="flat"/>
++            </style>
++          </object>
++        </child>
++        <child>
++          <object class="GtkComboBox" id="to_combo">
++            <property name="visible">True</property>
++            <property name="can_focus">False</property>
++            <property name="opacity">0.88</property>
++            <property name="hexpand">True</property>
++            <signal name="changed" handler="to_combobox_changed_cb" swapped="no"/>
++            <child>
++              <object class="GtkCellRendererText" id="to_renderer">
++                <property name="ellipsize">end</property>
++              </object>
++              <attributes>
++                <attribute name="text">0</attribute>
++              </attributes>
++            </child>
++          </object>
++        </child>
++        <child>
++          <object class="GtkButton" id="swap_button">
++            <property name="label">⇆</property>
++            <property name="visible">True</property>
++            <property name="can_focus">False</property>
++            <property name="receives_default">False</property>
++            <property name="tooltip_text" translatable="yes">Switch conversion units</property>
++            <property name="relief">none</property>
++            <signal name="clicked" handler="swap_button_clicked_cb" swapped="no"/>
+           </object>
+         </child>
+         <child>
+-          <object class="GtkLabel" id="convert_equals">
++          <object class="GtkBox" id="result_holder">
+             <property name="visible">True</property>
++            <property name="orientation">horizontal</property>
+             <property name="sensitive">True</property>
++            <property name="spacing">6</property>
++            <property name="margin-end">2</property>
+             <property name="can_focus">False</property>
+-            <property name="halign">center</property>
++            <property name="halign">end</property>
+             <property name="valign">center</property>
+-            <property name="hexpand">False</property>
++            <property name="hexpand">True</property>
+             <property name="vexpand">False</property>
+-            <property name="justify">center</property>
+-            <property name="xalign">0</property>
+-            <property name="yalign">0</property>
+-            <property name="label" translatable="yes" context="convertion equals label">=</property>
++            <property name="visible">True</property>
++            <child>
++              <object class="GtkLabel" id="from_label">
++                <property name="visible">True</property>
++                <property name="sensitive">True</property>
++                <property name="selectable">True</property>
++                <property name="can_focus">False</property>
++                <property name="halign">start</property>
++                <property name="valign">center</property>
++                <property name="hexpand">True</property>
++                <property name="vexpand">False</property>
++                <property name="justify">center</property>
++                <property name="ellipsize">end</property>
++                <property name="xalign">0</property>
++                <property name="yalign">0</property>
++              </object>
++            </child>
++            <child>
++              <object class="GtkLabel" id="convert_equals">
++                <property name="visible">True</property>
++                <property name="sensitive">True</property>
++                <property name="can_focus">False</property>
++                <property name="halign">center</property>
++                <property name="valign">center</property>
++                <property name="hexpand">False</property>
++                <property name="vexpand">False</property>
++                <property name="justify">center</property>
++                <property name="xalign">0</property>
++                <property name="yalign">0</property>
++                <property name="label" translatable="yes" context="convertion equals label">=</property>
++              </object>
++            </child>
++            <child>
++              <object class="GtkLabel" id="to_label">
++                <property name="visible">True</property>
++                <property name="sensitive">True</property>
++                <property name="selectable">True</property>
++                <property name="can_focus">False</property>
++                <property name="halign">fill</property>
++                <property name="valign">center</property>
++                <property name="hexpand">True</property>
++                <property name="vexpand">False</property>
++                <property name="justify">center</property>
++                <property name="ellipsize">end</property>
++                <property name="xalign">0</property>
++                <property name="yalign">0</property>
++              </object>
++              <packing>
++                <property name="expand">false</property>
++              </packing>
++            </child>
+           </object>
+         </child>
+         <child>
+-          <object class="GtkLabel" id="to_label">
+-            <property name="visible">True</property>
++          <object class="GtkBox">
++            <property name="orientation">horizontal</property>
+             <property name="sensitive">True</property>
++            <property name="spacing">6</property>
+             <property name="can_focus">False</property>
+             <property name="halign">end</property>
+             <property name="valign">center</property>
+             <property name="hexpand">True</property>
+             <property name="vexpand">False</property>
+-            <property name="justify">center</property>
+-            <property name="xalign">0</property>
+-            <property name="yalign">0</property>
++            <property name="visible" bind-source="result_holder" bind-property="visible" bind-flags="sync-create|invert-boolean"/>
++            <child>
++              <object class="GtkLabel">
++                <property name="visible">True</property>
++                <property name="sensitive">True</property>
++                <property name="selectable">True</property>
++                <property name="can_focus">False</property>
++                <property name="halign">start</property>
++                <property name="valign">center</property>
++                <property name="hexpand">True</property>
++                <property name="vexpand">False</property>
++                <property name="justify">center</property>
++                <property name="ellipsize">end</property>
++                <property name="xalign">0</property>
++                <property name="yalign">0</property>
++                <property name="label" bind-source="from_label" bind-property="label" bind-flags="sync-create|bidirectional"/>
++              </object>
++            </child>
++            <child>
++              <object class="GtkLabel">
++                <property name="visible">True</property>
++                <property name="sensitive">True</property>
++                <property name="can_focus">False</property>
++                <property name="halign">center</property>
++                <property name="valign">center</property>
++                <property name="hexpand">False</property>
++                <property name="vexpand">False</property>
++                <property name="justify">center</property>
++                <property name="xalign">0</property>
++                <property name="yalign">0</property>
++                <property name="label" bind-source="convert_equals" bind-property="label" bind-flags="sync-create|bidirectional"/>
++              </object>
++            </child>
++            <child>
++              <object class="GtkLabel">
++                <property name="visible">True</property>
++                <property name="sensitive">True</property>
++                <property name="selectable">True</property>
++                <property name="can_focus">False</property>
++                <property name="halign">fill</property>
++                <property name="valign">center</property>
++                <property name="hexpand">True</property>
++                <property name="vexpand">False</property>
++                <property name="justify">center</property>
++                <property name="ellipsize">end</property>
++                <property name="xalign">0</property>
++                <property name="yalign">0</property>
++                <property name="label" bind-source="to_label" bind-property="label" bind-flags="sync-create|bidirectional"/>
++              </object>
++            </child>
+           </object>
+-          <packing>
+-            <property name="expand">false</property>
+-            <property name="fill">true</property>
+-          </packing>
+         </child>
+       </object>
++      <packing>
++        <property name="left-attach">0</property>
++        <property name="top-attach">1</property>
++        <property name="width">4</property>
++      </packing>
+     </child>
+   </template>
+ </interface>
+ 
+diff --git a/src/math-converter.vala b/src/math-converter.vala
+index a83dea24..c470b91f 100644
+--- a/src/math-converter.vala
++++ b/src/math-converter.vala
+@@ -1,128 +1,144 @@
+ /*
+  * Copyright (C) 2008-2012 Robert Ancell
+  *
+  * This program is free software: you can redistribute it and/or modify it under
+  * the terms of the GNU General Public License as published by the Free Software
+  * Foundation, either version 3 of the License, or (at your option) any later
+  * version. See http://www.gnu.org/copyleft/gpl.html the full text of the
+  * license.
+  */
+ 
+ [GtkTemplate (ui = "/org/gnome/calculator/math-converter.ui")]
+ public class MathConverter : Gtk.Grid
+ {
+     private MathEquation equation = null;
+ 
+     private string category;
+ 
+     [GtkChild]
+     private Gtk.CellRendererText from_renderer;
+ 
+     [GtkChild]
+     private Gtk.ComboBox from_combo;
+     [GtkChild]
+     private Gtk.ComboBox to_combo;
+     [GtkChild]
+     private Gtk.Label from_label;
+     [GtkChild]
+     private Gtk.Label to_label;
++    public bool outer_box_visible { set; get; default = false; }
+ 
+     public signal void changed ();
+ 
+     construct
+     {
+         from_combo.set_cell_data_func (from_renderer, from_cell_data_func);
+-        CurrencyManager.get_default ().updated.connect (() => { update_result_label (); });
++        CurrencyManager.get_default ().updated.connect (() => {
++            update_visibility ();
++            update_result_label ();
++        });
+ 
++        update_visibility ();
+         update_from_model ();
+     }
+ 
+     public MathConverter (MathEquation equation)
+     {
+       set_equation (equation);
+     }
+ 
+     public void set_equation (MathEquation equation)
+     {
+         this.equation = equation;
+         equation.notify["display"].connect ((pspec) => { update_result_label (); });
+     }
+ 
+     public void set_category (string? category)
+     {
+         if (this.category == category)
+             return;
+         this.category = category;
+ 
++        update_visibility ();
+         update_from_model ();
+     }
+ 
+     public string get_category ()
+     {
+         return category;
+     }
+ 
+     public void set_conversion (/*string category,*/ string unit_a, string unit_b)
+     {
+         var ua = UnitManager.get_default ().get_unit_by_name (unit_a);
+         var ub = UnitManager.get_default ().get_unit_by_name (unit_b);
+         if (ua == null || ub == null)
+         {
+             /* Select the first unit */
+             var model = from_combo.get_model ();
+             Gtk.TreeIter iter;
+             if (model.get_iter_first (out iter))
+             {
+                 Gtk.TreeIter child_iter;
+                 while (model.iter_children (out child_iter, iter))
+                     iter = child_iter;
+                 from_combo.set_active_iter (iter);
+             }
+             return;
+         }
+ 
+         set_active_unit (from_combo, null, ua);
+         set_active_unit (to_combo, null, ub);
+     }
+ 
+     public void get_conversion (out Unit from_unit, out Unit to_unit)
+     {
+         Gtk.TreeIter from_iter, to_iter;
+ 
+         from_combo.get_active_iter (out from_iter);
+         to_combo.get_active_iter (out to_iter);
+ 
+         from_combo.get_model ().get (from_iter, 2, out from_unit, -1);
+         to_combo.get_model ().get (to_iter, 2, out to_unit, -1);
+     }
+ 
++    private void update_visibility ()
++    {
++        if (category != "currency") {
++            this.outer_box_visible = true;
++            return;
++        }
++
++        this.outer_box_visible = CurrencyManager.get_default ().loaded;
++    }
++
+     private void update_result_label ()
+     {
+         var x = equation.number;
+         if (x == null)
+             return;
+ 
+         Unit source_unit, target_unit;
+         var z = convert_equation (x, out source_unit, out target_unit);
+         if (z != null)
+         {
+             var source_text = source_unit.format (x);
+             var target_text = target_unit.format (z);
+             from_label.set_text (source_text);
+             to_label.set_text (target_text);
+         }
+     }
+ 
+     private void update_from_model ()
+     {
+         var from_model = new Gtk.TreeStore (3, typeof (string), typeof (UnitCategory), typeof (Unit));
+ 
+         if (category == null)
+         {
+             var categories = UnitManager.get_default ().get_categories ();
+             foreach (var category in categories)
+             {
+                 Gtk.TreeIter parent;
+                 from_model.append (out parent, null);
+                 from_model.set (parent, 0, category.display_name, 1, category, -1);
+ 
+-- 
+2.31.1
+
