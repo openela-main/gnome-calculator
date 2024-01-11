@@ -1,0 +1,552 @@
+From fc5cb8d7cff03a48cf88e9df1007a497293b56bb Mon Sep 17 00:00:00 2001
+From: Robert Roth <robert.roth@bee-tf.ro>
+Date: Sun, 3 Feb 2019 16:31:28 +0200
+Subject: [PATCH 1/5] Implemented exchange rate refresh interval setting
+
+---
+ data/org.gnome.calculator.gschema.xml |  5 ++++
+ lib/currency.vala                     | 10 +++++--
+ src/gnome-calculator.vala             |  1 +
+ src/math-preferences.vala             | 40 +++++++++++++++++++++++++++
+ 4 files changed, 54 insertions(+), 2 deletions(-)
+
+diff --git a/data/org.gnome.calculator.gschema.xml b/data/org.gnome.calculator.gschema.xml
+index 8cb1fc83..a3af435f 100644
+--- a/data/org.gnome.calculator.gschema.xml
++++ b/data/org.gnome.calculator.gschema.xml
+@@ -30,60 +30,65 @@
+       <range min="8" max="64"/>
+       <summary>Word size</summary>
+       <description>The size of the words used in bitwise operations</description>
+     </key>
+     <key type="i" name="base">
+       <default>10</default>
+       <range min="2" max="16"/>
+       <summary>Numeric Base</summary>
+       <description>The numeric base</description>
+     </key>
+     <key type="b" name="show-thousands">
+       <default>false</default>
+       <summary>Show Thousands Separators</summary>
+       <description>Indicates whether thousands separators are shown in large numbers.</description>
+     </key>
+     <key type="b" name="show-zeroes">
+       <default>false</default>
+       <summary>Show Trailing Zeroes</summary>
+       <description>Indicates whether any trailing zeroes after the  numeric point should be shown in the display value.</description>
+     </key>
+     <key name="number-format" enum="org.gnome.calculator.NumberFormat">
+       <default>'automatic'</default>
+       <summary>Number format</summary>
+       <description>The format to display numbers in</description>
+     </key>
+     <key name="angle-units" enum="org.gnome.calculator.AngleUnit">
+       <default>'degrees'</default>
+       <summary>Angle units</summary>
+       <description>The angle units to use</description>
+     </key>
++    <key name="refresh-interval" type="i">
++      <default>604800</default>
++      <summary>Currency update interval</summary>
++      <description>How often the currency exchange rates should be updated</description>
++    </key>
+     <key name="button-mode" enum="org.gnome.calculator.ButtonMode">
+       <default>'basic'</default>
+       <summary>Button mode</summary>
+       <description>The button mode</description>
+     </key>
+     <key type="s" name="source-currency">
+       <default>''</default>
+       <summary>Source currency</summary>
+       <description>Currency of the current calculation</description>
+     </key>
+     <key type="s" name="target-currency">
+       <default>''</default>
+       <summary>Target currency</summary>
+       <description>Currency to convert the current calculation into</description>
+     </key>
+     <key type="s" name="source-units">
+       <default>'degree'</default>
+       <summary>Source units</summary>
+       <description>Units of the current calculation</description>
+     </key>
+     <key type="s" name="target-units">
+       <default>'radian'</default>
+       <summary>Target units</summary>
+       <description>Units to convert the current calculation into</description>
+     </key>
+     <key type="i" name="precision">
+       <default>2000</default>
+       <summary>Internal precision</summary>
+       <description>The internal precision used with the MPFR library</description>
+     </key>
+diff --git a/lib/currency.vala b/lib/currency.vala
+index f9b913aa..c098cc52 100644
+--- a/lib/currency.vala
++++ b/lib/currency.vala
+@@ -1,48 +1,51 @@
+ /*
+  * Copyright (C) 2008-2012 Robert Ancell.
+  *
+  * This program is free software: you can redistribute it and/or modify it under
+  * the terms of the GNU General Public License as published by the Free Software
+  * Foundation, either version 3 of the License, or (at your option) any later
+  * version. See http://www.gnu.org/copyleft/gpl.html the full text of the
+  * license.
+  */
+ 
+ static bool downloading_imf_rates = false;
+ static bool downloading_ecb_rates = false;
+ static bool loaded_rates = false;
+ private static CurrencyManager? default_currency_manager = null;
+ 
+ public class CurrencyManager : Object
+ {
+     private List<Currency> currencies;
++
++    public int refresh_interval { get; set; }
++
+     public signal void updated ();
+ 
+     public static CurrencyManager get_default ()
+     {
+         if (default_currency_manager != null)
+             return default_currency_manager;
+ 
+         default_currency_manager = new CurrencyManager ();
+ 
+         default_currency_manager.currencies.append (new Currency ("AED", _("UAE Dirham"), "إ.د"));
+         default_currency_manager.currencies.append (new Currency ("AUD", _("Australian Dollar"), "$"));
+         default_currency_manager.currencies.append (new Currency ("BGN", _("Bulgarian Lev"), "лв"));
+         default_currency_manager.currencies.append (new Currency ("BHD", _("Bahraini Dinar"), ".ب.د"));
+         default_currency_manager.currencies.append (new Currency ("BND", _("Brunei Dollar"), "$"));
+         default_currency_manager.currencies.append (new Currency ("BRL", _("Brazilian Real"), "R$"));
+         default_currency_manager.currencies.append (new Currency ("BWP", _("Botswana Pula"), "P"));
+         default_currency_manager.currencies.append (new Currency ("CAD", _("Canadian Dollar"), "$"));
+         default_currency_manager.currencies.append (new Currency ("CFA", _("CFA Franc"), "Fr"));
+         default_currency_manager.currencies.append (new Currency ("CHF", _("Swiss Franc"), "Fr"));
+         default_currency_manager.currencies.append (new Currency ("CLP", _("Chilean Peso"), "$"));
+         default_currency_manager.currencies.append (new Currency ("CNY", _("Chinese Yuan"), "¥"));
+         default_currency_manager.currencies.append (new Currency ("COP", _("Colombian Peso"), "$"));
+         default_currency_manager.currencies.append (new Currency ("CZK", _("Czech Koruna"), "Kč"));
+         default_currency_manager.currencies.append (new Currency ("DKK", _("Danish Krone"), "kr"));
+         default_currency_manager.currencies.append (new Currency ("DZD", _("Algerian Dinar"), "ج.د"));
+         default_currency_manager.currencies.append (new Currency ("EEK", _("Estonian Kroon"), "KR"));
+         default_currency_manager.currencies.append (new Currency ("EUR", _("Euro"), "€"));
+         default_currency_manager.currencies.append (new Currency ("GBP", _("British Pound Sterling"), "£"));
+         default_currency_manager.currencies.append (new Currency ("HKD", _("Hong Kong Dollar"), "$"));
+         default_currency_manager.currencies.append (new Currency ("HRK", _("Croatian Kuna"), "kn"));
+@@ -120,60 +123,63 @@ public class CurrencyManager : Object
+         return Path.build_filename (Environment.get_user_cache_dir (), "gnome-calculator", "rms_five.xls");
+     }
+ 
+     private string get_ecb_rate_filepath ()
+     {
+         return Path.build_filename (Environment.get_user_cache_dir (), "gnome-calculator", "eurofxref-daily.xml");
+     }
+ 
+     private Currency add_currency (string short_name, string source)
+     {
+         foreach (var c in currencies)
+             if (c.name == short_name)
+             {
+                 c.source = source;
+                 return c;
+             }
+ 
+         warning ("Currency %s is not in the currency table", short_name);
+         var c = new Currency (short_name, short_name, short_name);
+         c.source = source;
+         currencies.append (c);
+ 
+         return c;
+     }
+ 
+     /* A file needs to be redownloaded if it doesn't exist, or is too old.
+      * When an error occur, it probably won't hurt to try to download again.
+      */
+     private bool file_needs_update (string filename, double max_age)
+     {
++        if (max_age == 0)
++            return false;
++
+         if (!FileUtils.test (filename, FileTest.IS_REGULAR))
+             return true;
+ 
+         var buf = Posix.Stat ();
+         if (Posix.stat (filename, out buf) == -1)
+             return true;
+ 
+         var modify_time = buf.st_mtime;
+         var now = time_t ();
+         if (now - modify_time > max_age)
+             return true;
+ 
+         return false;
+     }
+ 
+     private void load_imf_rates ()
+     {
+         var name_map = new HashTable <string, string> (str_hash, str_equal);
+         name_map.insert ("Euro", "EUR");
+         name_map.insert ("Japanese yen", "JPY");
+         name_map.insert ("U.K. pound", "GBP");
+         name_map.insert ("U.S. dollar", "USD");
+         name_map.insert ("Algerian dinar", "DZD");
+         name_map.insert ("Australian dollar", "AUD");
+         name_map.insert ("Bahrain dinar", "BHD");
+         name_map.insert ("Botswana pula", "BWP");
+         name_map.insert ("Brazilian real", "BRL");
+         name_map.insert ("Brunei dollar", "BND");
+         name_map.insert ("Canadian dollar", "CAD");
+         name_map.insert ("Chilean peso", "CLP");
+@@ -350,68 +356,68 @@ public class CurrencyManager : Object
+             return;
+         }
+ 
+         xpath_ctx.register_ns ("xref", "http://www.ecb.int/vocabulary/2002-08-01/eurofxref");
+         var xpath_obj = xpath_ctx.eval_expression ("//xref:Cube[@currency][@rate]");
+         if (xpath_obj == null)
+         {
+             warning ("Couldn't create XPath object");
+             return;
+         }
+         var len = (xpath_obj->nodesetval != null) ? xpath_obj->nodesetval->length () : 0;
+         for (var i = 0; i < len; i++)
+         {
+             var node = xpath_obj->nodesetval->item (i);
+ 
+             if (node->type == Xml.ElementType.ELEMENT_NODE)
+                 set_ecb_rate (node, eur_rate);
+ 
+             /* Avoid accessing removed elements */
+             if (node->type != Xml.ElementType.NAMESPACE_DECL)
+                 node = null;
+         }
+ 
+         Xml.Parser.cleanup ();
+     }
+ 
+     private void download_rates ()
+     {
+         /* Update rates if necessary */
+         var path = get_imf_rate_filepath ();
+-        if (!downloading_imf_rates && file_needs_update (path, 60 * 60 * 24 * 7))
++        if (!downloading_imf_rates && file_needs_update (path, refresh_interval))
+         {
+             downloading_imf_rates = true;
+             debug ("Downloading rates from the IMF...");
+             download_file.begin ("https://www.imf.org/external/np/fin/data/rms_five.aspx?tsvflag=Y", path, "IMF");
+         }
+         path = get_ecb_rate_filepath ();
+-        if (!downloading_ecb_rates && file_needs_update (path, 60 * 60 * 24 * 7))
++        if (!downloading_ecb_rates && file_needs_update (path, refresh_interval))
+         {
+             downloading_ecb_rates = true;
+             debug ("Downloading rates from the ECB...");
+             download_file.begin ("https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml", path, "ECB");
+         }
+     }
+ 
+     private bool load_rates ()
+     {
+         /* Already loaded */
+         if (loaded_rates)
+             return true;
+ 
+         /* In process */
+         if (downloading_imf_rates || downloading_ecb_rates)
+             return false;
+ 
+         /* Use the IMF provided values and top up with currencies tracked by the ECB and not the IMF */
+         load_imf_rates ();
+         load_ecb_rates ();
+ 
+         /* Check if we couldn't find out a currency */
+         foreach (var c in currencies)
+             if (c.get_value () == null || c.get_value ().is_zero ())
+                 warning ("Currency %s is not provided by IMF or ECB", c.name);
+ 
+         debug ("Rates loaded");
+         loaded_rates = true;
+ 
+         updated ();
+diff --git a/src/gnome-calculator.vala b/src/gnome-calculator.vala
+index 9f2549e7..5b3f9b8d 100644
+--- a/src/gnome-calculator.vala
++++ b/src/gnome-calculator.vala
+@@ -100,60 +100,61 @@ public class Calculator : Gtk.Application
+         }
+         catch (Error e)
+         {
+             error ("Error loading menu UI: %s", e.message);
+         }
+ 
+         var menu = builder.get_object ("appmenu") as MenuModel;
+         set_app_menu (menu);
+ 
+         set_accels_for_action ("win.mode::basic", {"<alt>B"});
+         set_accels_for_action ("win.mode::advanced", {"<alt>A"});
+         set_accels_for_action ("win.mode::financial", {"<alt>F"});
+         set_accels_for_action ("win.mode::programming", {"<alt>P"});
+         set_accels_for_action ("win.mode::keyboard", {"<alt>K"});
+         set_accels_for_action ("win.copy", {"<control>C"});
+         set_accels_for_action ("win.paste", {"<control>V"});
+         set_accels_for_action ("win.undo", {"<control>Z"});
+         set_accels_for_action ("win.close", {"<control>W"});
+         set_accels_for_action ("win.redo", {"<control><shift>Z"});
+         return current_window;
+     }
+ 
+     protected override void startup ()
+     {
+         base.startup ();
+ 
+         settings = new Settings ("org.gnome.calculator");
+         last_opened_window = create_new_window (settings);
+         // restore the first window position from the settings
+         load_window_position (last_opened_window);
++        CurrencyManager.get_default ().refresh_interval = settings.get_int ("refresh-interval");
+     }
+ 
+     private MathWindow get_active_math_window ()
+     {
+         return (MathWindow) get_active_window ();
+     }
+ 
+     protected override void activate ()
+     {
+         base.activate ();
+ 
+         last_opened_window.present ();
+         if (equation_string != "" && equation_string != null)
+         {
+             var equations = (equation_string.compress ()).split ("\n",0);
+             for (var i = 0; i < equations.length; i++)
+             {
+                 if ((equations [i].strip ()).length > 0)
+                     last_opened_window.equation.set (equations [i]);
+                 else
+                     last_opened_window.equation.solve ();
+             }
+         }
+         if (mode_string != "" && mode_string != null)
+         {
+             var mode = ButtonMode.BASIC;
+ 
+             switch (mode_string)
+             {
+             case "basic":
+diff --git a/src/math-preferences.vala b/src/math-preferences.vala
+index d1ab7657..335b97c6 100644
+--- a/src/math-preferences.vala
++++ b/src/math-preferences.vala
+@@ -1,58 +1,61 @@
+ /*
+  * Copyright (C) 2008-2012 Robert Ancell
+  *
+  * This program is free software: you can redistribute it and/or modify it under
+  * the terms of the GNU General Public License as published by the Free Software
+  * Foundation, either version 3 of the License, or (at your option) any later
+  * version. See http://www.gnu.org/copyleft/gpl.html the full text of the
+  * license.
+  */
+ 
+ public class MathPreferencesDialog : Gtk.Dialog
+ {
+     public MathEquation equation { private get; construct; }
+ 
+     private Gtk.ComboBox angle_unit_combo;
++    private Gtk.ComboBox refresh_interval_combo;
+     private Gtk.ComboBox number_format_combo;
+     private Gtk.ComboBox word_size_combo;
+     private Gtk.SpinButton decimal_places_spin;
+     private Gtk.Switch thousands_separator_switch;
+     private Gtk.Switch trailing_zeroes_switch;
++    private Settings settings;
+ 
+     public MathPreferencesDialog (MathEquation eq)
+     {
+         Object(use_header_bar: 1, equation: eq, resizable: false);
+     }
+ 
+     construct
+     {
++        settings = new Settings ("org.gnome.calculator");
+         set_title (/* Title of preferences dialog */
+                    _("Preferences"));
+         border_width = 8;
+ 
+         ((Gtk.HeaderBar) get_header_bar ()).show_close_button = true;
+ 
+         var grid = new Gtk.Grid ();
+         grid.show ();
+         grid.border_width = 5;
+         grid.column_spacing = 6;
+         grid.row_spacing = 12;
+         get_content_area ().pack_start (grid, true, true, 0);
+ 
+         var label = new Gtk.Label.with_mnemonic (/* Preferences dialog: Label for number format combo box */
+                                                  _("Number _Format:"));
+         label.show ();
+         label.xalign = 0;
+         grid.attach (label, 0, 0, 1, 1);
+ 
+         number_format_combo = new Gtk.ComboBox ();
+         label.mnemonic_widget = number_format_combo;
+         number_format_combo.show ();
+         number_format_combo.changed.connect (number_format_combo_changed_cb);
+         grid.attach (number_format_combo, 1, 0, 1, 1);
+ 
+         var model = new Gtk.ListStore (2, typeof (string), typeof (int));
+         number_format_combo.model = model;
+         Gtk.TreeIter iter;
+         model.append (out iter);
+         model.set (iter, 0,
+@@ -153,106 +156,143 @@ public class MathPreferencesDialog : Gtk.Dialog
+         renderer = new Gtk.CellRendererText ();
+         angle_unit_combo.pack_start (renderer, true);
+         angle_unit_combo.add_attribute (renderer, "text", 0);
+ 
+         label = new Gtk.Label.with_mnemonic (/* Preferences dialog: Label for word size combo box */
+                                              _("Word _size:"));
+         label.show ();
+         label.xalign = 0;
+         grid.attach (label, 0, 6, 1, 1);
+ 
+         word_size_combo = new Gtk.ComboBox ();
+         label.mnemonic_widget = word_size_combo;
+         word_size_combo.show ();
+         word_size_combo.changed.connect (word_size_combo_changed_cb);
+         grid.attach (word_size_combo, 1, 6, 1, 1);
+ 
+         model = new Gtk.ListStore (2, typeof (string), typeof (int));
+         word_size_combo.model = model;
+         model.append (out iter);
+         model.set (iter, 0, /* Word size combo: 8 bits */ _("8 bits"), 1, 8);
+         model.append (out iter);
+         model.set (iter, 0, /* Word size combo: 16 bits */ _("16 bits"), 1, 16);
+         model.append (out iter);
+         model.set (iter, 0, /* Word size combo: 32 bits */ _("32 bits"), 1, 32);
+         model.append (out iter);
+         model.set (iter, 0, /* Word size combo: 64 bits */ _("64 bits"), 1, 64);
+         renderer = new Gtk.CellRendererText ();
+         word_size_combo.pack_start (renderer, true);
+         word_size_combo.add_attribute (renderer, "text", 0);
+ 
++        label = new Gtk.Label.with_mnemonic (/* Preferences dialog: Label for word size combo box */
++                                             _("Exchange rate refresh interval"));
++        label.show ();
++        label.xalign = 0;
++        grid.attach (label, 0, 7, 1, 1);
++
++        refresh_interval_combo = new Gtk.ComboBox ();
++        label.mnemonic_widget = refresh_interval_combo;
++        refresh_interval_combo.show ();
++        refresh_interval_combo.changed.connect (refresh_interval_combo_changed_cb);
++        grid.attach (refresh_interval_combo, 1, 7, 1, 1);
++
++        model = new Gtk.ListStore (2, typeof (string), typeof (int));
++        refresh_interval_combo.model = model;
++        model.append (out iter);
++        model.set (iter, 0, /* Refresh interval combo: never */ _("never"), 1, 0);
++        model.append (out iter);
++        model.set (iter, 0, /* Refresh interval combo: daily */ _("daily"), 1, 60 * 60 * 24);
++        model.append (out iter);
++        model.set (iter, 0, /* Refresh interval combo: weekly */ _("weekly"), 1, 60 * 60 * 24 * 7);
++        renderer = new Gtk.CellRendererText ();
++        refresh_interval_combo.pack_start (renderer, true);
++        refresh_interval_combo.add_attribute (renderer, "text", 0);
++
+         decimal_places_spin.set_value (equation.accuracy);
+         equation.notify["accuracy"].connect ((pspec) => { decimal_places_spin.set_value (equation.accuracy); });
+ 
+         thousands_separator_switch.set_active (equation.show_thousands_separators);
+         equation.notify["show-thousands-separators"].connect (() => { thousands_separator_switch.set_active (equation.show_thousands_separators); });
+ 
+         trailing_zeroes_switch.set_active (equation.show_trailing_zeroes);
+         equation.notify["show-trailing_zeroes"].connect (() => { trailing_zeroes_switch.set_active (equation.show_trailing_zeroes); });
+ 
+         set_combo_box_from_int (number_format_combo, equation.number_format);
+         equation.notify["number-format"].connect ((pspec) => { set_combo_box_from_int (number_format_combo, equation.number_format); });
+ 
+         set_combo_box_from_int (word_size_combo, equation.word_size);
+         equation.notify["word-size"].connect ((pspec) => { set_combo_box_from_int (word_size_combo, equation.word_size); });
+ 
+         set_combo_box_from_int (angle_unit_combo, equation.angle_units);
+         equation.notify["angle-units"].connect ((pspec) => { set_combo_box_from_int (angle_unit_combo, equation.angle_units); });
++
++        set_combo_box_from_int (refresh_interval_combo, settings.get_int ("refresh-interval"));
+     }
+ 
+     protected override void response (int id)
+     {
+         hide ();
+     }
+ 
+     protected override bool delete_event (Gdk.EventAny event)
+     {
+         hide ();
+         return true;
+     }
+ 
+     private void number_format_combo_changed_cb (Gtk.ComboBox combo)
+     {
+         Gtk.TreeIter iter;
+         combo.get_active_iter (out iter);
+         DisplayFormat value;
+         combo.model.get (iter, 1, out value, -1);
+         equation.number_format = value;
+     }
+ 
+     private void angle_unit_combo_changed_cb (Gtk.ComboBox combo)
+     {
+         Gtk.TreeIter iter;
+         combo.get_active_iter (out iter);
+         AngleUnit value;
+         combo.model.get (iter, 1, out value, -1);
+         equation.angle_units = value;
+     }
+ 
+     private void word_size_combo_changed_cb (Gtk.ComboBox combo)
+     {
+         Gtk.TreeIter iter;
+         combo.get_active_iter (out iter);
+         int value;
+         combo.model.get (iter, 1, out value, -1);
+         equation.word_size = value;
+     }
+ 
++    private void refresh_interval_combo_changed_cb (Gtk.ComboBox combo)
++    {
++        Gtk.TreeIter iter;
++        combo.get_active_iter (out iter);
++        int value;
++        combo.model.get (iter, 1, out value, -1);
++        settings.set_int ("refresh-interval", value);
++        CurrencyManager.get_default ().refresh_interval = value;
++
++    }
++
+     private void set_combo_box_from_int (Gtk.ComboBox combo, int value)
+     {
+         Gtk.TreeIter iter;
+         var valid = combo.model.get_iter_first (out iter);
+         while (valid)
+         {
+             int v;
+ 
+             combo.model.get (iter, 1, out v, -1);
+             if (v == value)
+                 break;
+             valid = combo.model.iter_next (ref iter);
+         }
+         if (!valid)
+             valid = combo.model.get_iter_first (out iter);
+ 
+         combo.set_active_iter (iter);
+     }
+ }
+-- 
+2.31.1
+
